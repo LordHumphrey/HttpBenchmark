@@ -44,7 +44,7 @@ func NewDownloadHttpConfig() *DownloadHttpConfig {
 		HTTPMethod:            "GET",
 		Timeout:               10 * time.Second,
 		XForwardFor:           Utils.GenerateRandomIPAddress(),
-		singleIpDownloadTimes: 1024,
+		singleIpDownloadTimes: 128,
 	}
 }
 
@@ -57,69 +57,12 @@ func DoHttpDownload(queryDNSFlags DnsQuery.QueryDNSFlags, downloadHttpConfig Dow
 	}()
 
 	for i := 0; i < downloadHttpConfig.singleIpDownloadTimes; i++ {
-		dialer := &net.Dialer{
-			Timeout:   30 * time.Second,
-			KeepAlive: 30 * time.Second,
-		}
-		if downloadHttpConfig.LocalIP != nil {
-			dialer.LocalAddr = &net.TCPAddr{
-				IP: *downloadHttpConfig.LocalIP,
-			}
-		}
+		fmt.Printf("\rDownload times: %d ", i+1)
+		startTime := time.Now() // 记录开始时间
+		transport := createTransport(downloadHttpConfig)
+		_, request := createHttpRequest(queryDNSFlags, downloadHttpConfig)
 
-		// Generate a random TLS configuration
-		tlsConfig := &tls.Config{InsecureSkipVerify: true}
-
-		// TODO socks5
-		//socks5Dialer, _ := proxy.SOCKS5("tcp", "172.18.4.85:9000", nil, dialer)
-		transport := &http.Transport{
-			Proxy:                 nil,
-			TLSClientConfig:       tlsConfig,
-			MaxIdleConns:          downloadHttpConfig.singleIpDownloadTimes + 16,
-			MaxIdleConnsPerHost:   downloadHttpConfig.singleIpDownloadTimes * 2,
-			IdleConnTimeout:       90 * time.Second,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ExpectContinueTimeout: 1 * time.Second,
-			DisableKeepAlives:     false,
-			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				// Override the addr with your own remote IP and port
-				addr = net.JoinHostPort(downloadHttpConfig.RemoteIP.String(), strconv.Itoa(downloadHttpConfig.RemotePort))
-				return dialer.DialContext(ctx, network, addr)
-			},
-		}
-		if downloadHttpConfig.url.Scheme == "https" {
-			transport.DialTLSContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-				// Override the addr with your own remote IP and port
-				addr = net.JoinHostPort(downloadHttpConfig.RemoteIP.String(), strconv.Itoa(downloadHttpConfig.RemotePort))
-				return tls.DialWithDialer(dialer, network, addr, tlsConfig)
-			}
-		} else {
-			transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-				// Override the addr with your own remote IP and port
-				addr = net.JoinHostPort(downloadHttpConfig.RemoteIP.String(), strconv.Itoa(downloadHttpConfig.RemotePort))
-				return dialer.DialContext(ctx, network, addr)
-			}
-		}
-		var request *http.Request
-		var requestErr error
-		request, requestErr = http.NewRequest("GET", downloadHttpConfig.url.String(), nil)
-		if requestErr != nil {
-			log.Fatalf("Error creating new request: %s", requestErr)
-			break
-		} else {
-			request.Header.Add("Cookie", Utils.GenerateRRandStringBytesMaskImper(12))
-			request.Header.Add("User-Agent", queryDNSFlags.HTTPUserAgent)
-			request.Header.Add("Referer", downloadHttpConfig.Referer)
-			if downloadHttpConfig.XForwardFor != "" {
-				request.Header.Add("X-Forwarded-For", downloadHttpConfig.XForwardFor)
-				request.Header.Add("X-Real-IP", downloadHttpConfig.XForwardFor)
-			}
-		}
-
-		client := &http.Client{
-			Transport: transport,
-			Timeout:   downloadHttpConfig.Timeout,
-		}
+		client := createHttpClient(transport, downloadHttpConfig)
 
 		response, err := client.Do(request)
 
@@ -136,27 +79,104 @@ func DoHttpDownload(queryDNSFlags DnsQuery.QueryDNSFlags, downloadHttpConfig Dow
 		}
 		_, err = io.Copy(io.Discard, response.Body)
 		if err != nil {
-			log.Errorln("Error in io.Copy:", err)
-			//continue
+			//fmt.Printf("\rError in io.Copy: %s", err)
+			//log.Error("\rError in io.Copy: ", err)
+			continue
 		}
 		err = response.Body.Close()
 		if err != nil {
 			log.Errorln("Error in Body.Close: %s", err)
 			//continue
 		}
+		elapsed := time.Since(startTime) // 计算时间差
+		fmt.Printf("Loop %d took %s\n", i+1, elapsed)
 	}
-
 	wg.Done()
-	log.Debugf("Download %s done", downloadHttpConfig.RemoteIP.String())
+	log.Infof("Download %s done", downloadHttpConfig.RemoteIP.String())
 }
 
+func createHttpClient(transport *http.Transport, downloadHttpConfig DownloadHttpConfig) *http.Client {
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   downloadHttpConfig.Timeout * 2,
+	}
+	return client
+}
+
+func createHttpRequest(queryDNSFlags DnsQuery.QueryDNSFlags, downloadHttpConfig DownloadHttpConfig) (error, *http.Request) {
+	var request *http.Request
+	var requestErr error
+	request, requestErr = http.NewRequest("GET", downloadHttpConfig.url.String(), nil)
+	if requestErr != nil {
+		log.Fatalf("Error creating new request: %s", requestErr)
+		return requestErr, nil
+	} else {
+		request.Header.Add("Cookie", Utils.GenerateRRandStringBytesMaskImper(12))
+		request.Header.Add("User-Agent", queryDNSFlags.HTTPUserAgent)
+		request.Header.Add("Referer", downloadHttpConfig.Referer)
+		if downloadHttpConfig.XForwardFor != "" {
+			request.Header.Add("X-Forwarded-For", downloadHttpConfig.XForwardFor)
+			request.Header.Add("X-Real-IP", downloadHttpConfig.XForwardFor)
+		}
+	}
+	return nil, request
+}
+
+func createTransport(downloadHttpConfig DownloadHttpConfig) *http.Transport {
+	dialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+	if downloadHttpConfig.LocalIP != nil {
+		dialer.LocalAddr = &net.TCPAddr{
+			IP: *downloadHttpConfig.LocalIP,
+		}
+	}
+
+	// Generate a random TLS configuration
+	tlsConfig := &tls.Config{InsecureSkipVerify: true}
+
+	// TODO socks5
+	//socks5Dialer, _ := proxy.SOCKS5("tcp", "172.18.4.85:9000", nil, dialer)
+	transport := &http.Transport{
+		Proxy:                 nil,
+		TLSClientConfig:       tlsConfig,
+		MaxIdleConns:          downloadHttpConfig.singleIpDownloadTimes + 16,
+		MaxIdleConnsPerHost:   downloadHttpConfig.singleIpDownloadTimes * 2,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		DisableKeepAlives:     false,
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			// Override the addr with your own remote IP and port
+			addr = net.JoinHostPort(downloadHttpConfig.RemoteIP.String(), strconv.Itoa(downloadHttpConfig.RemotePort))
+			return dialer.DialContext(ctx, network, addr)
+		},
+	}
+	if downloadHttpConfig.url.Scheme == "https" {
+		transport.DialTLSContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			// Override the addr with your own remote IP and port
+			addr = net.JoinHostPort(downloadHttpConfig.RemoteIP.String(), strconv.Itoa(downloadHttpConfig.RemotePort))
+			return tls.DialWithDialer(dialer, network, addr, tlsConfig)
+		}
+	} else {
+		transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			// Override the addr with your own remote IP and port
+			addr = net.JoinHostPort(downloadHttpConfig.RemoteIP.String(), strconv.Itoa(downloadHttpConfig.RemotePort))
+			return dialer.DialContext(ctx, network, addr)
+		}
+	}
+	return transport
+}
+
+// https?:\/\/[\w\-\.]+\/[\w\-\.\/]+(?:\.js|\.css|\.png|\.jpg|\.jpeg|\.gif|\.ico)
 func main() {
 	fmt.Println("start...")
 	// Define the command line arguments
 	localIP := flag.String("localIP", "", "The local IP to use")
 	myURL := flag.String("url", "", "The URL to download")
 	parallelDownloads := flag.Int("parallel", 16, "The number of parallel downloads")
-	singleIpDownloadTimes := flag.Int("singleIpDownloadTimes", 1024, "The number of single ip download times")
+	singleIpDownloadTimes := flag.Int("singleIpDownloadTimes", 128, "The number of single ip download times")
 	flag.Parse()
 	// Check if the arguments were provided
 	if *localIP == "" || *myURL == "" || *parallelDownloads <= 0 {
@@ -180,9 +200,11 @@ func main() {
 			queryDNSFlags := DnsQuery.NewQueryDNSFlags()
 			queryDNSFlags.Name = parsedURL.Host
 			queryDNSFlags.ClientSubnet = subNetIp
-
 			queryRes, _ := DnsQuery.DoDnsQuery(*queryDNSFlags)
-			for _, queryResponseIp := range queryRes {
+			queryResLen := len(queryRes)
+			var waitGroup sync.WaitGroup
+			for i := 0; i < *parallelDownloads; i++ {
+				queryResponseIp := queryRes[i%queryResLen]
 				downloadHttp := NewDownloadHttpConfig()
 				downloadHttp.Referer = *myURL
 				ip := net.ParseIP(*localIP)
@@ -198,15 +220,13 @@ func main() {
 				} else {
 					downloadHttp.RemotePort = 80
 				}
-				log.Debugf("Remote IP: %s", queryResponseIp.String())
-				var waitGroup sync.WaitGroup
-				for i := 0; i < *parallelDownloads; i++ {
-					waitGroup.Add(1)
-					log.Println("Start Download IP: ", queryResponseIp)
-					go DoHttpDownload(*queryDNSFlags, *downloadHttp, &waitGroup)
-				}
-				waitGroup.Wait()
+				log.Debugf("\rRemote IP: %s", queryResponseIp.String())
+
+				waitGroup.Add(1)
+				go DoHttpDownload(*queryDNSFlags, *downloadHttp, &waitGroup)
 			}
+			waitGroup.Wait()
+
 		}
 	}
 }
