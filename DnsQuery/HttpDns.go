@@ -2,18 +2,21 @@ package DnsQuery
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/base64"
 	"fmt"
 	"github.com/miekg/dns"
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/net/http2"
 	"io"
+	"net"
 	"net/http"
 )
 
 // HTTP makes a DnsQuery query over HTTP(s)
 type HTTP struct {
-	DnsHttpConfig
+	QueryDNSFlags
 	TLSConfig *tls.Config
 	UserAgent string
 	Method    string
@@ -22,22 +25,52 @@ type HTTP struct {
 	conn *http.Client
 }
 
+type versionedRoundTripper struct {
+	http1 *http.Transport
+	http2 *http2.Transport
+}
+
+func (v *versionedRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	var resp *http.Response
+	var err error
+
+	// If HTTP/3 fails, try HTTP/2
+	resp, err = v.http2.RoundTrip(req)
+	if err == nil {
+		return resp, nil
+	}
+
+	// If HTTP/2 fails, fall back to HTTP/1
+	return v.http1.RoundTrip(req)
+}
+
 func (h *HTTP) Exchange(m *dns.Msg) (*dns.Msg, error) {
 	if h.conn == nil || !h.ReuseConn {
-		h.conn = &http.Client{
-			Timeout: h.Timeout,
-			Transport: &http.Transport{
+		dialer := &net.Dialer{} // Create a new dialer
+		if h.LocalIP != nil {   // If a local IP is set
+			localAddr := &net.TCPAddr{
+				IP: h.LocalIP,
+			}
+			dialer.LocalAddr = localAddr // Set the local IP
+		}
+		vrt := &versionedRoundTripper{
+			http1: &http.Transport{
+				DialContext:     dialer.DialContext, // Use the custom dialer
 				TLSClientConfig: h.TLSConfig,
 				MaxConnsPerHost: 1,
 				MaxIdleConns:    1,
 				Proxy:           http.ProxyFromEnvironment,
 			},
+			http2: &http2.Transport{
+				DialTLSContext: func(ctx context.Context, network, addr string, cfg *tls.Config) (net.Conn, error) {
+					return tls.DialWithDialer(dialer, network, addr, cfg)
+				},
+			},
 		}
-		//log.Debug("Using HTTP/2")
-		//h.conn.Transport = &http2.Transport{
-		//	TLSClientConfig: h.TLSConfig,
-		//	AllowHTTP:       true,
-		//}
+		h.conn = &http.Client{
+			Timeout:   h.Timeout,
+			Transport: vrt,
+		}
 	}
 
 	buf, err := m.Pack()

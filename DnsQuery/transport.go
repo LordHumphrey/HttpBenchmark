@@ -1,73 +1,35 @@
 package DnsQuery
 
 import (
-	browser "github.com/EDDYCJY/fake-useragent"
+	"HttpBenchmark/Common"
 	"github.com/miekg/dns"
 	"math/rand"
 	"time"
 )
 
 type QueryDNSFlags struct {
-	Name         string        `short:"q" long:"qname" description:"Query name" default:"baidu.com"`
-	Server       string        `short:"s" long:"server" description:"DnsQuery server(s)" default:"https://dns.alidns.com/dns-query"`
-	Types        []string      `short:"t" long:"type" description:"RR type (e.g. A, AAAA, MX, etc.) or type integer" default:"A"`
-	DNSSEC       bool          `short:"d" long:"dnssec" description:"Set the DO (DNSSEC OK) bit in the OPT record" default:"false"`
-	NSID         bool          `short:"n" long:"nsid" description:"Set EDNS0 NSID opt" default:"false"`
-	ClientSubnet string        `long:"subnet" description:"Set EDNS0 client subnet" default:""`
-	Timeout      time.Duration `long:"timeout" description:"Query timeout" default:"10s"`
-	Pad          bool          `long:"pad" description:"Set EDNS0 padding" default:"false"`
-	Class        uint16        `short:"C" description:"Set query class (default: IN 0x01)" default:"1"`
-	ReuseConn    bool          `long:"reuse-conn" description:"Reuse connections across queries to the same server (default: true)" default:"true"`
-
-	// Header flags
-	AuthoritativeAnswer bool `long:"aa" description:"Set AA (Authoritative Answer) flag in query" default:"false"`
-	AuthenticData       bool `long:"ad" description:"Set AD (Authentic Data) flag in query" default:"false"`
-	CheckingDisabled    bool `long:"cd" description:"Set CD (Checking Disabled) flag in query" default:"false"`
-	RecursionDesired    bool `long:"rd" description:"Set RD (Recursion Desired) flag in query (default: true)" default:"true"`
-	RecursionAvailable  bool `long:"ra" description:"Set RA (Recursion Available) flag in query" default:"false"`
-	Zero                bool `long:"z" description:"Set Z (Zero) flag in query" default:"false"`
-	Truncated           bool `long:"t" description:"Set TC (Truncated) flag in query" default:"false"`
-
-	// HTTP
-	HTTPUserAgent string `long:"http-user-agent" description:"HTTP user agent" default:""`
-	HTTPMethod    string `long:"http-method" description:"HTTP method" default:"GET"`
-	PMTUD         bool   `long:"pmtud" description:"PMTU discovery (default: true)"`
-
-	// TLS parameters
-	TLSInsecureSkipVerify bool     `short:"i" long:"tls-insecure-skip-verify" description:"Disable TLS certificate verification"`
-	TLSServerName         string   `long:"tls-server-name" description:"TLS server name for host verification"`
-	TLSMinVersion         string   `long:"tls-min-version" description:"Minimum TLS version to use" default:"1.0"`
-	TLSMaxVersion         string   `long:"tls-max-version" description:"Maximum TLS version to use" default:"1.3"`
-	TLSNextProtos         []string `long:"tls-next-protos" description:"TLS next protocols for ALPN"`
-	TLSCipherSuites       []string `long:"tls-cipher-suites" description:"TLS cipher suites"`
-	TLSCurvePreferences   []string `long:"tls-curve-preferences" description:"TLS curve preferences"`
-	TLSClientCertificate  string   `long:"tls-client-cert" description:"TLS client certificate file"`
-	TLSClientKey          string   `long:"tls-client-key" description:"TLS client key file"`
-	TLSKeyLogFile         string   `long:"tls-key-log-file" env:"SSLKEYLOGFILE" description:"TLS key log file"`
-
-	// MISC
-	UDPBuffer uint16 `long:"udp-buffer" description:"Set EDNS0 UDP size in query" default:"1232"`
+	Common.HttpBaseConfig
+	Name                string   `short:"q" long:"qname" description:"Query name" default:"baidu.com"`
+	Server              string   `short:"s" long:"server" description:"DnsQuery server(s)" default:"https://dns.alidns.com/dns-query"`
+	Types               []string `short:"t" long:"type" description:"RR type (e.g. A, AAAA, MX, etc.) or type integer" default:"A"`
+	DNSSEC              bool     `short:"d" long:"dnssec" description:"Set the DO (DNSSEC OK) bit in the OPT record" default:"false"`
+	NSID                bool     `short:"n" long:"nsid" description:"Set EDNS0 NSID opt" default:"false"`
+	ClientSubnet        string   `long:"subnet" description:"Set EDNS0 client subnet" default:""`
+	Pad                 bool     `long:"pad" description:"Set EDNS0 padding" default:"false"`
+	Class               uint16   `short:"C" description:"Set query class (default: IN 0x01)" default:"1"`
+	AuthoritativeAnswer bool     `long:"aa" description:"Set AA (Authoritative Answer) flag in query" default:"false"`
+	AuthenticData       bool     `long:"ad" description:"Set AD (Authentic Data) flag in query" default:"false"`
+	CheckingDisabled    bool     `long:"cd" description:"Set CD (Checking Disabled) flag in query" default:"false"`
+	RecursionDesired    bool     `long:"rd" description:"Set RD (Recursion Desired) flag in query (default: true)" default:"true"`
+	RecursionAvailable  bool     `long:"ra" description:"Set RA (Recursion Available) flag in query" default:"false"`
+	Zero                bool     `long:"z" description:"Set Z (Zero) flag in query" default:"false"`
+	Truncated           bool     `long:"t" description:"Set TC (Truncated) flag in query" default:"false"`
+	UDPBuffer           uint16   `long:"udp-buffer" description:"Set EDNS0 UDP size in query" default:"1232"`
 }
 
 type Transport interface {
 	Exchange(*dns.Msg) (*dns.Msg, error)
 	Close() error
-}
-
-type DnsHttpConfig struct {
-	Server    string
-	LocalIP   string
-	ReuseConn bool
-	Timeout   time.Duration
-}
-
-func NewHttpConfig() *DnsHttpConfig {
-	return &DnsHttpConfig{
-		Server:    "",
-		LocalIP:   "0.0.0.0",
-		ReuseConn: true,
-		Timeout:   10 * time.Second,
-	}
 }
 
 // NewQueryDNSFlags creates a new QueryDNSFlags with default values
@@ -125,37 +87,25 @@ func NewQueryDNSFlags() *QueryDNSFlags {
 		"https://sm2.doh.pub/dns-query",
 		"https://doh.360.cn/dns-query",
 	}
+
+	randSource := rand.New(rand.NewSource(time.Now().UnixNano()))
 	return &QueryDNSFlags{
-		Name:                  "baidu.com",
-		Server:                serverList[rand.New(rand.NewSource(time.Now().UnixNano())).Intn(len(serverList))],
-		Types:                 []string{"A"},
-		DNSSEC:                false,
-		NSID:                  false,
-		ClientSubnet:          ipList[rand.Intn(len(ipList))], // Randomly select an IP from the list
-		Timeout:               10 * time.Second,
-		Pad:                   false,
-		Class:                 1,
-		ReuseConn:             true,
-		AuthoritativeAnswer:   false,
-		AuthenticData:         false,
-		CheckingDisabled:      false,
-		RecursionDesired:      true,
-		RecursionAvailable:    false,
-		Zero:                  false,
-		Truncated:             false,
-		HTTPUserAgent:         browser.Random(),
-		HTTPMethod:            "GET",
-		PMTUD:                 false,
-		TLSInsecureSkipVerify: false,
-		TLSServerName:         "",
-		TLSMinVersion:         "1.0",
-		TLSMaxVersion:         "1.3",
-		TLSNextProtos:         []string{},
-		TLSCipherSuites:       []string{},
-		TLSCurvePreferences:   []string{},
-		TLSClientCertificate:  "",
-		TLSClientKey:          "",
-		TLSKeyLogFile:         "",
-		UDPBuffer:             1232,
+		HttpBaseConfig:      *Common.NewHttpBaseConfig(),
+		Name:                "baidu.com",
+		Server:              serverList[randSource.Intn(len(serverList))],
+		Types:               []string{"A"},
+		DNSSEC:              false,
+		NSID:                false,
+		ClientSubnet:        ipList[randSource.Intn(len(ipList))], // Randomly select an IP from the list
+		Pad:                 false,
+		Class:               1,
+		AuthoritativeAnswer: false,
+		AuthenticData:       false,
+		CheckingDisabled:    false,
+		RecursionDesired:    true,
+		RecursionAvailable:  false,
+		Zero:                false,
+		Truncated:           false,
+		UDPBuffer:           1232,
 	}
 }

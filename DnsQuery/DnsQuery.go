@@ -105,27 +105,21 @@ func createQuery(flags QueryDNSFlags, rrTypes []uint16) []dns.Msg {
 	return queries
 }
 
-// newTransport creates a new transport based on local options
-func newTransport(flags QueryDNSFlags, tlsConfig *tls.Config) (*Transport, error) {
-	var ts Transport
+// newTransport creates new transport based on local options
+func newTransport(queryDNSFlags QueryDNSFlags, tlsConfig *tls.Config) (*Transport, error) {
+	var transport Transport
 
-	common := DnsHttpConfig{
-		Server:    flags.Server,
-		ReuseConn: flags.ReuseConn,
-		Timeout:   flags.Timeout,
-	}
+	log.Debugf("Using HTTP(s) transport: %s", queryDNSFlags.Server)
 
-	log.Debugf("Using HTTP(s) transport: %s", flags.Server)
-
-	ts = &HTTP{
-		DnsHttpConfig: common,
+	transport = &HTTP{
+		QueryDNSFlags: queryDNSFlags,
 		TLSConfig:     tlsConfig,
-		UserAgent:     flags.HTTPUserAgent,
-		Method:        flags.HTTPMethod,
-		NoPMTUd:       !flags.PMTUD,
+		UserAgent:     queryDNSFlags.HTTPUserAgent,
+		Method:        queryDNSFlags.HTTPMethod,
+		NoPMTUd:       !queryDNSFlags.PMTUD,
 	}
 
-	return &ts, nil
+	return &transport, nil
 }
 
 // parseRRTypes parses a list of RR types in string format ("A", "AAAA", etc.) or integer format (1, 28, etc.)
@@ -176,7 +170,7 @@ func DoDnsQuery(queryDNSFlags QueryDNSFlags) ([]*net.IP, error) {
 			switch rr := answer.(type) {
 			case *dns.A:
 				ipResultList = append(ipResultList, &rr.A)
-				log.Debugf("A Record") // Access the A field of the dns.A struct
+				log.Debugf("A Record") // Access the `A` field of the dns.A struct
 			case *dns.AAAA:
 				ipResultList = append(ipResultList, &rr.AAAA)
 				log.Debugf("AAAA Record") // Access the AAAA field of the dns.AAAA struct
