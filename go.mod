@@ -5,6 +5,7 @@ go 1.22
 require github.com/miekg/dns v1.1.59
 
 require (
+	github.com/AdguardTeam/golibs v0.18.1
 	github.com/EDDYCJY/fake-useragent v0.2.0
 	github.com/natesales/q v0.19.2
 	github.com/sirupsen/logrus v1.9.3
