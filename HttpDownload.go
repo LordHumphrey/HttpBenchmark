@@ -105,16 +105,31 @@ func (downloadHttpConfig *DownloadHttpConfig) DoHttpDownload(wg *sync.WaitGroup)
 
 		startTime := time.Now() // 记录开始时间
 		response, err := client.Do(request)
+
 		if err != nil {
-			log.Println("Error in client.Do:", err)
-			break
-		} else {
-			if response.StatusCode != 200 {
+			if response != nil && response.TLS != nil {
+				state := response.TLS
+				// 打印出服务器的证书信息
+				for _, cert := range state.PeerCertificates {
+					log.Debugln("Issuer Name:", cert.Issuer)
+					log.Debugln("Common Name:", cert.Subject.CommonName)
+					log.Debugln("Not Before:", cert.NotBefore)
+					log.Debugln("Not After:", cert.NotAfter)
+					log.Debugln("Signature Algorithm:", cert.SignatureAlgorithm)
+					log.Debugln("Public Key Algorithm:", cert.PublicKeyAlgorithm)
+					log.Debugln("Version:", cert.Version)
+					log.Debugln("Serial Number:", cert.SerialNumber)
+					log.Debugln("-----")
+				}
+			}
+			if response != nil && response.StatusCode != 200 {
 				// 打印响应主体
 				responseBody, _ := io.ReadAll(response.Body)
 				log.Errorln("Response body: ", string(responseBody))
 				break
 			}
+			log.Println("Error in client.Do:", err)
+			break
 		}
 		var written int64
 		written, err = io.Copy(io.Discard, response.Body)
@@ -164,6 +179,7 @@ func (downloadHttpConfig *DownloadHttpConfig) createHttpRequest() *http.Request 
 			request.Header.Add("X-Forwarded-For", downloadHttpConfig.XForwardFor)
 			request.Header.Add("X-Real-IP", downloadHttpConfig.XForwardFor)
 		}
+		request.Host = downloadHttpConfig.url.Host
 	}
 	return request
 }
@@ -179,49 +195,9 @@ func (downloadHttpConfig *DownloadHttpConfig) createTransport() *http.Transport 
 		}
 	}
 
-	// 在这里获取随机的 TLS 指纹
-	fingerprint, ok := Utils.GetFingerprint("random")
-	if !ok {
-		log.Errorln("Failed to get random fingerprint")
-		return nil
-	}
-
-	// 创建一个新的 UConn 对象，用于处理 TLS 握手
-	uTlsConfig := &utls.Config{
-		ServerName:             downloadHttpConfig.url.Hostname(),
-		SessionTicketsDisabled: true,
-	}
-	clientID := utls.ClientHelloID{
-		Client:  fingerprint.Client,
-		Version: fingerprint.Version,
-		Seed:    fingerprint.Seed,
-	}
-
-	// 创建一个网络连接
-	conn, err := net.Dial("tcp", downloadHttpConfig.RemoteIP.String()+":"+strconv.Itoa(downloadHttpConfig.RemotePort))
-	if err != nil {
-		log.Errorln("Failed to establish a connection:", err)
-		return nil
-	}
-	uConn := utls.UClient(conn, uTlsConfig, clientID)
-
-	// 进行 TLS 握手
-	err = uConn.Handshake()
-	if err != nil {
-		log.Errorln("Failed to perform TLS handshake:", err)
-		return nil
-	}
-
-	// 获取 tls.Config
-	//tlsConfig := uConn.HandshakeState.Hello.Config
-	state := uConn.ConnectionState()
-	// 创建一个新的 tls.Config 对象，使用握手后的信息
 	tlsConfig := &tls.Config{
-		CipherSuites:           []uint16{state.CipherSuite},
+		InsecureSkipVerify:     true,
 		SessionTicketsDisabled: true,
-		MinVersion:             state.Version,
-		MaxVersion:             state.Version,
-		NextProtos:             []string{"h2", "http/1.1"},
 	}
 
 	transport := &http.Transport{
@@ -238,6 +214,28 @@ func (downloadHttpConfig *DownloadHttpConfig) createTransport() *http.Transport 
 			addr = net.JoinHostPort(downloadHttpConfig.RemoteIP.String(), strconv.Itoa(downloadHttpConfig.RemotePort))
 			return dialer.DialContext(ctx, network, addr)
 		},
+		DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			// 创建一个utls.Config对象
+			config := &utls.Config{
+				InsecureSkipVerify:     true,
+				SessionTicketsDisabled: true,
+			}
+			// 创建一个普通的net.Conn
+			conn, err := net.Dial("tcp", addr)
+			if err != nil {
+				return nil, err
+			}
+			// 创建一个utls.UClient对象，使用HelloChrome_Auto指纹
+			uConn := utls.UClient(conn, config, utls.HelloChrome_Auto)
+
+			// 执行TLS握手
+			err = uConn.Handshake()
+			if err != nil {
+				log.Error("uConn.Handshake error: ", err)
+				return nil, err
+			}
+			return uConn, nil
+		},
 	}
 	if downloadHttpConfig.url.Scheme == "https" {
 		transport.DialTLSContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -252,11 +250,10 @@ func (downloadHttpConfig *DownloadHttpConfig) createTransport() *http.Transport 
 			return dialer.DialContext(ctx, network, addr)
 		}
 	}
-
-	log.Infoln("CipherSuites:", transport.TLSClientConfig.CipherSuites)
-	log.Infoln("InsecureSkipVerify:", transport.TLSClientConfig.InsecureSkipVerify)
-	log.Infoln("MinVersion:", transport.TLSClientConfig.MinVersion)
-	log.Infoln("MaxVersion:", transport.TLSClientConfig.MaxVersion)
-	log.Infoln("NextProtos:", transport.TLSClientConfig.NextProtos)
+	log.Debugln("CipherSuites:", transport.TLSClientConfig.CipherSuites)
+	log.Debugln("InsecureSkipVerify:", transport.TLSClientConfig.InsecureSkipVerify)
+	log.Debugln("MinVersion:", transport.TLSClientConfig.MinVersion)
+	log.Debugln("MaxVersion:", transport.TLSClientConfig.MaxVersion)
+	log.Debugln("NextProtos:", transport.TLSClientConfig.NextProtos)
 	return transport
 }
