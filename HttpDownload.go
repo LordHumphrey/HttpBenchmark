@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/tls"
 	_ "embed"
+	utls "github.com/sagernet/utls"
 	log "github.com/sirupsen/logrus"
 	"strconv"
 
@@ -95,14 +96,15 @@ func (downloadHttpConfig *DownloadHttpConfig) DoHttpDownload(wg *sync.WaitGroup)
 	log.Debugf("Download %s started", downloadHttpConfig.RemoteIP.String())
 	for i := 0; i < downloadHttpConfig.SingleIpDownloadTimes; i++ {
 		log.Debugf("\rDownload times: %d ", i+1)
-		startTime := time.Now() // 记录开始时间
+
 		transport := downloadHttpConfig.createTransport()
+
 		request := downloadHttpConfig.createHttpRequest()
 
 		client := downloadHttpConfig.createHttpClient(transport)
 
+		startTime := time.Now() // 记录开始时间
 		response, err := client.Do(request)
-
 		if err != nil {
 			log.Println("Error in client.Do:", err)
 			break
@@ -177,10 +179,51 @@ func (downloadHttpConfig *DownloadHttpConfig) createTransport() *http.Transport 
 		}
 	}
 
-	// Generate a random TLS configuration
-	tlsConfig := &tls.Config{InsecureSkipVerify: true}
+	// 在这里获取随机的 TLS 指纹
+	fingerprint, ok := Utils.GetFingerprint("random")
+	if !ok {
+		log.Errorln("Failed to get random fingerprint")
+		return nil
+	}
 
-	// TODO socks5
+	// 创建一个新的 UConn 对象，用于处理 TLS 握手
+	uTlsConfig := &utls.Config{
+		ServerName:             downloadHttpConfig.url.Hostname(),
+		SessionTicketsDisabled: true,
+	}
+	clientID := utls.ClientHelloID{
+		Client:  fingerprint.Client,
+		Version: fingerprint.Version,
+		Seed:    fingerprint.Seed,
+	}
+
+	// 创建一个网络连接
+	conn, err := net.Dial("tcp", downloadHttpConfig.RemoteIP.String()+":"+strconv.Itoa(downloadHttpConfig.RemotePort))
+	if err != nil {
+		log.Errorln("Failed to establish a connection:", err)
+		return nil
+	}
+	uConn := utls.UClient(conn, uTlsConfig, clientID)
+
+	// 进行 TLS 握手
+	err = uConn.Handshake()
+	if err != nil {
+		log.Errorln("Failed to perform TLS handshake:", err)
+		return nil
+	}
+
+	// 获取 tls.Config
+	//tlsConfig := uConn.HandshakeState.Hello.Config
+	state := uConn.ConnectionState()
+	// 创建一个新的 tls.Config 对象，使用握手后的信息
+	tlsConfig := &tls.Config{
+		CipherSuites:           []uint16{state.CipherSuite},
+		SessionTicketsDisabled: true,
+		MinVersion:             state.Version,
+		MaxVersion:             state.Version,
+		NextProtos:             []string{"h2", "http/1.1"},
+	}
+
 	transport := &http.Transport{
 		Proxy:                 nil,
 		TLSClientConfig:       tlsConfig,
@@ -209,5 +252,11 @@ func (downloadHttpConfig *DownloadHttpConfig) createTransport() *http.Transport 
 			return dialer.DialContext(ctx, network, addr)
 		}
 	}
+
+	log.Infoln("CipherSuites:", transport.TLSClientConfig.CipherSuites)
+	log.Infoln("InsecureSkipVerify:", transport.TLSClientConfig.InsecureSkipVerify)
+	log.Infoln("MinVersion:", transport.TLSClientConfig.MinVersion)
+	log.Infoln("MaxVersion:", transport.TLSClientConfig.MaxVersion)
+	log.Infoln("NextProtos:", transport.TLSClientConfig.NextProtos)
 	return transport
 }

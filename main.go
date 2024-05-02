@@ -139,7 +139,7 @@ func calculateTotalDownloadedAndSpeed(tasks []*DownloadHttpConfig) {
 		totalDownloadSpeedInMbps := (totalDownloadSpeed * 8) / 1024
 
 		// Clear the console
-		clearConsole()
+		//clearConsole()
 
 		fmt.Printf("Total download speed: %d Mbps, Total downloaded: %s", totalDownloadSpeedInMbps, Utils.FormatBytes(totalDownloaded))
 		time.Sleep(3 * time.Second)
