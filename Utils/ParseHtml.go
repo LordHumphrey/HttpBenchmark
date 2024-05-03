@@ -5,6 +5,9 @@ import (
 	"golang.org/x/net/html"
 	"io"
 	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -53,16 +56,23 @@ func parseLinks(htmlContent string) ([]string, error) {
 			switch n.Data {
 			case "a", "link":
 				linkAttr = "href"
-			case "img", "script":
+			case "img", "script", "source":
 				linkAttr = "src"
 			}
 
 			if linkAttr != "" {
 				for _, a := range n.Attr {
 					if a.Key == linkAttr {
-						// Ignore "javascript:;" links and links without "https"
-						if a.Val != "javascript:;" && strings.HasPrefix(a.Val, "https") {
-							links = append(links, a.Val)
+						// Ignore "javascript:;" links
+						if a.Val != "javascript:;" && (strings.HasPrefix(a.Val, "https") || strings.HasPrefix(a.Val, "http") || strings.HasPrefix(a.Val, "//")) {
+							// If the link starts with "//", prepend "http:" to make it a valid URL
+							if strings.HasPrefix(a.Val, "//") {
+								a.Val = "https:" + a.Val
+							}
+							// Ignore links that contain "gov.cn"
+							if !strings.Contains(a.Val, "gov.cn") {
+								links = append(links, a.Val)
+							}
 						}
 					}
 				}
@@ -77,12 +87,19 @@ func parseLinks(htmlContent string) ([]string, error) {
 	return links, nil
 }
 
-// GetAndParseLinks retrieves the HTML content from the given URL and parses all the links.
+// GetAndParseLinks retrieves the HTML content from the given URL, writes it to a file, and parses all the links.
 func GetAndParseLinks(url string) ([]string, error) {
 	htmlContent, err := getHTML(url)
 	if err != nil {
 		return nil, err
 	}
+
+	// Write the HTML content to a file
+	//err = writeHTMLToFile(htmlContent, url)
+	//if err != nil {
+	//	log.Error("error writing HTML content to file: ", err)
+	//	return nil, err
+	//}
 
 	links, err := parseLinks(htmlContent)
 	if err != nil {
@@ -90,4 +107,24 @@ func GetAndParseLinks(url string) ([]string, error) {
 	}
 
 	return links, nil
+}
+
+func writeHTMLToFile(htmlContent, urlStr string) error {
+	// Parse the URL to get the host
+	u, err := url.Parse(urlStr)
+	if err != nil {
+		return err
+	}
+
+	// Use the host as the filename
+	filename := u.Host + ".html"
+
+	// Create the HtmlContent directory if it does not exist
+	err = os.MkdirAll("HtmlContent", os.ModePerm)
+	if err != nil {
+		return err
+	}
+
+	// Write the HTML content to a file in the HtmlContent directory
+	return os.WriteFile(filepath.Join("HtmlContent", filename), []byte(htmlContent), 0644)
 }

@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	log "github.com/sirupsen/logrus"
+	"math/rand"
 	"net"
 	"net/url"
 	"os"
@@ -17,15 +18,29 @@ import (
 )
 
 func main() {
-	log.Debugf("start...")
-	parallelDownloads, httpBaseConfig, downloadHttpConfig := parseArgs()
 
+	log.Debugf("start...")
+	parallelDownloads, httpBaseConfig, downloadHttpConfig, crawlerMode := parseArgs()
+	if log.IsLevelEnabled(log.DebugLevel) {
+		value := 2
+		parallelDownloads = &value
+		log.Debugf("parallelDownloads: %v", *parallelDownloads)
+	}
+	var parsedLinksList []string
+	if *crawlerMode {
+		parsedLinksList, _ = Utils.GetAndParseLinks(downloadHttpConfig.url.String())
+	} else {
+		parsedLinksList = []string{downloadHttpConfig.url.String()}
+	}
+	log.Infof("parsedLinksList: %v", parsedLinksList)
 	for {
-		parsedURL, err := url.Parse(downloadHttpConfig.url.String())
+		//parsedURL, err := url.Parse(downloadHttpConfig.url.String())
+		r := rand.New(rand.NewSource(time.Now().UnixNano()))
+		parsedURL, err := url.Parse(parsedLinksList[r.Intn(len(parsedLinksList))])
 		if err != nil {
-			log.Println("Error creating new request:", err)
-			return
+			log.Error("Error in parsing URL")
 		}
+		//downloadHttpConfig.url = parsedURL
 		subNetIpList, getSubNetIpErr := Utils.GetIpSubnetFromEmbedFile(cidrData, *parallelDownloads)
 		if getSubNetIpErr != nil {
 			log.Errorln("Get Ip from fail")
@@ -34,9 +49,10 @@ func main() {
 			queryRes := doDnsQuery(httpBaseConfig, parsedURL.Host, subNetIp)
 			var waitGroup sync.WaitGroup
 
-			tasks := createDownloadTasks(downloadHttpConfig, queryRes, *parallelDownloads)
+			tasks := createDownloadTasks(downloadHttpConfig, queryRes, *parallelDownloads, parsedURL)
 			go calculateTotalDownloadedAndSpeed(tasks)
 			executeDownloadTasks(tasks, &waitGroup)
+
 			waitGroup.Wait()
 		}
 	}
@@ -54,7 +70,7 @@ func doDnsQuery(httpBaseConfig *Common.HttpBaseConfig, host, subNetIp string) []
 	return queryRes
 }
 
-func parseArgs() (*int, *Common.HttpBaseConfig, *DownloadHttpConfig) {
+func parseArgs() (*int, *Common.HttpBaseConfig, *DownloadHttpConfig, *bool) {
 
 	httpBaseConfig := Common.NewHttpBaseConfig()
 	downloadHttpConfig := NewDownloadHttpConfig()
@@ -65,6 +81,8 @@ func parseArgs() (*int, *Common.HttpBaseConfig, *DownloadHttpConfig) {
 	timeout := flag.Duration("timeout", httpBaseConfig.Timeout, "The timeout duration")
 	referer := flag.String("referer", downloadHttpConfig.Referer, "The HTTP referer")
 	xForwardFor := flag.String("xForwardFor", downloadHttpConfig.XForwardFor, "The X-Forwarded-For HTTP header")
+
+	crawlerMode := flag.Bool("crawlerMode", false, "Whether to use crawler mode")
 
 	httpBaseConfig.HTTPMethod = *httpMethod
 	httpBaseConfig.ReuseConn = *reuseConn
@@ -95,26 +113,24 @@ func parseArgs() (*int, *Common.HttpBaseConfig, *DownloadHttpConfig) {
 
 	downloadHttpConfig.HttpBaseConfig = *httpBaseConfig
 
-	return parallelDownloads, httpBaseConfig, downloadHttpConfig
+	return parallelDownloads, httpBaseConfig, downloadHttpConfig, crawlerMode
 }
 
-func createDownloadTasks(config *DownloadHttpConfig, queryRes []*net.IP, parallelDownloads int) []*DownloadHttpConfig {
+func createDownloadTasks(downloadHttpConfig *DownloadHttpConfig, queryRes []*net.IP, parallelDownloads int, url *url.URL) []*DownloadHttpConfig {
 	tasks := make([]*DownloadHttpConfig, parallelDownloads)
 	queryResLen := len(queryRes)
 
 	for i := 0; i < parallelDownloads; i++ {
 		queryResponseIp := queryRes[i%queryResLen]
-		downloadHttp := NewDownloadHttpConfig()
-		downloadHttp.Referer = config.url.String()
-		downloadHttp.LocalIP = config.LocalIP
-		downloadHttp.url = config.url
-		downloadHttp.RemoteIP = queryResponseIp
-		if config.url.Scheme == "https" {
-			downloadHttp.RemotePort = 443
+		newDownloadHttpConfig := NewDownloadHttpConfig(WithReferer(downloadHttpConfig.Referer), WithRemoteIP(queryResponseIp))
+		newDownloadHttpConfig.LocalIP = downloadHttpConfig.LocalIP
+		newDownloadHttpConfig.url = url
+		if newDownloadHttpConfig.url.Scheme == "https" {
+			newDownloadHttpConfig.RemotePort = 443
 		} else {
-			downloadHttp.RemotePort = 80
+			newDownloadHttpConfig.RemotePort = 80
 		}
-		tasks[i] = downloadHttp
+		tasks[i] = newDownloadHttpConfig
 	}
 	return tasks
 }
@@ -142,7 +158,7 @@ func calculateTotalDownloadedAndSpeed(tasks []*DownloadHttpConfig) {
 		//clearConsole()
 
 		fmt.Printf("\rTotal download speed: %d Mbps, Total downloaded: %s", totalDownloadSpeedInMbps, Utils.FormatBytes(totalDownloaded))
-		time.Sleep(3 * time.Second)
+		time.Sleep(300 * time.Second)
 	}
 }
 

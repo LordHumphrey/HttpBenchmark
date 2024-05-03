@@ -93,9 +93,10 @@ func (downloadHttpConfig *DownloadHttpConfig) DoHttpDownload(wg *sync.WaitGroup)
 			log.Fatalln("Recovered in DoHttpDownload", r)
 		}
 	}()
+	log.Infof("Download URL: %s", downloadHttpConfig.url.String())
 	log.Debugf("Download %s started", downloadHttpConfig.RemoteIP.String())
 	for i := 0; i < downloadHttpConfig.SingleIpDownloadTimes; i++ {
-		log.Debugf("\rDownload times: %d ", i+1)
+		log.Debugf("Download times: %d ", i+1)
 
 		transport := downloadHttpConfig.createTransport()
 
