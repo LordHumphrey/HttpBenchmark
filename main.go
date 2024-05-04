@@ -34,7 +34,6 @@ func main() {
 	}
 	log.Infof("parsedLinksList: %v", parsedLinksList)
 	for {
-		//parsedURL, err := url.Parse(downloadHttpConfig.url.String())
 		r := rand.New(rand.NewSource(time.Now().UnixNano()))
 		parsedURL, err := url.Parse(parsedLinksList[r.Intn(len(parsedLinksList))])
 		if err != nil {
@@ -47,6 +46,9 @@ func main() {
 		}
 		for _, subNetIp := range subNetIpList {
 			queryRes := doDnsQuery(httpBaseConfig, parsedURL.Host, subNetIp)
+			if len(queryRes) == 0 {
+				queryRes = doDnsQuery(httpBaseConfig, parsedURL.Host, subNetIp)
+			}
 			var waitGroup sync.WaitGroup
 
 			tasks := createDownloadTasks(downloadHttpConfig, queryRes, *parallelDownloads, parsedURL)
