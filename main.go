@@ -45,10 +45,7 @@ func main() {
 			log.Errorln("Get Ip from fail")
 		}
 		for _, subNetIp := range subNetIpList {
-			queryRes := doDnsQuery(httpBaseConfig, parsedURL.Host, subNetIp)
-			if len(queryRes) == 0 {
-				queryRes = doDnsQuery(httpBaseConfig, parsedURL.Host, subNetIp)
-			}
+			queryRes := doDnsQueryWithRetry(httpBaseConfig, parsedURL.Host, subNetIp, 10)
 			var waitGroup sync.WaitGroup
 
 			tasks := createDownloadTasks(downloadHttpConfig, queryRes, *parallelDownloads, parsedURL)
@@ -58,6 +55,17 @@ func main() {
 			waitGroup.Wait()
 		}
 	}
+}
+
+func doDnsQueryWithRetry(httpBaseConfig *Common.HttpBaseConfig, host, subNetIp string, maxAttempts int) []*net.IP {
+	var queryRes []*net.IP
+	for i := 0; i < maxAttempts; i++ {
+		queryRes = doDnsQuery(httpBaseConfig, host, subNetIp)
+		if len(queryRes) != 0 {
+			break
+		}
+	}
+	return queryRes
 }
 
 func doDnsQuery(httpBaseConfig *Common.HttpBaseConfig, host, subNetIp string) []*net.IP {
